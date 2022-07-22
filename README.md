@@ -8,13 +8,15 @@ The database keys can be found by connecting to that database in Azure then navi
 
 There is currently no IP whitelist but this may be added in a future addition.
 
-Push all of this to an Azure function and then you will be able to use the Key Broker in your automated scripts. Send it an API key (in the header, no body required), and it will return a resource token that can be used to connect to the database.
+Push all of this to an Azure function and then you will be able to use the Key Broker in your automated scripts. Send it an API key (in the header, no body required), and it will return permission details for creating a resource token that can be used to connect to the database.
 
-Currently, the resource token's created ONLY have access to the `Users` collection. As this is currently only being used by the User Audit to update data, this is sufficient. In the future this will need to be modified to provide other access as well.
+Currently, the resource token's created ONLY have access to the `Users` or `UserUsage` collection. As this is currently only being used by the User Audit to update data, this is sufficient. In the future this will need to be modified to provide other access as well.
 
 The following header is all that's required:
 - `x-api-key` - The API key unique to that company.
 
+Optionally you can also provide the following in the body:
+- `tokenType` - Can be `users` (default) or `userusage`.
 
 
 Powershell Example:
@@ -25,6 +27,16 @@ $APIKey = "KEY_HERE"
 $headers = @{
 	'x-api-key' = $APIKey
 }
+$body = @{
+    'tokenType' = "users"
+}
 
-Invoke-RestMethod -Method Post -Uri $APIUrl -Headers $headers
+$Token = Invoke-RestMethod -Method Post -Uri $APIUrl -Headers $headers -Body $body
+$contextToken = New-CosmosDbContextToken `
+    -Resource $Token.Resource `
+    -TimeStamp (Get-Date $Token.Timestamp) `
+    -TokenExpiry $Token.Life `
+    -Token (ConvertTo-SecureString -String $Token.Token -AsPlainText -Force)
+
+$resourceContext = New-CosmosDbContext -Account $CosmosDBAccount -Database $DB_Name -Token $contextToken
 ```

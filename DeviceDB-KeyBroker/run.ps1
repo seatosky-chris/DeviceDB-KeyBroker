@@ -17,6 +17,11 @@ Function ImmediateFailure ($Message) {
 # Get the sent api key and verify it
 $clientToken = $request.headers.'x-api-key'
 
+$tokenType = 'users'
+if ($request.Body.tokenType -and $request.Body.tokenType -eq 'userusage') {
+    $tokenType = 'userusage'
+}
+
 $ApiKeys = (Get-ChildItem env:APIKey_*)
 $ApiKey = $ApiKeys | Where-Object { $_.Value -eq $clientToken }
 
@@ -42,26 +47,43 @@ Write-Information "Connected to account."
 $ExistingUsers = Get-CosmosDbUser -Context $cosmosDbContext
 if ("UserAudit" -notin $ExistingUsers.Id) {
     New-CosmosDbUser -Context $cosmosDbContext -Id 'UserAudit' | Out-Null
-    New-CosmosDbPermission -Context $cosmosDbContext -UserId 'UserAudit' -Id 'all_useraudit_users' -Resource "dbs/DeviceUsage/colls/Users" -PermissionMode All
+    $usersCollectionId = Get-CosmosDbCollectionResourcePath -Database 'DeviceUsage' -Id 'Users'
+    $userUsageCollectionId = Get-CosmosDbCollectionResourcePath -Database 'DeviceUsage' -Id 'UserUsage'
+    New-CosmosDbPermission -Context $cosmosDbContext -UserId 'UserAudit' -Id 'all_useraudit_users' -Resource $usersCollectionId -PermissionMode All
+    New-CosmosDbPermission -Context $cosmosDbContext -UserId 'UserAudit' -Id 'all_useraudit_userusage' -Resource $userUsageCollectionId -PermissionMode Read
     Write-Information "New User and Permissions created."
 }
 
 # Create a resource token
 $TokenLife = 3600 # 1 hour (in seconds, max 5 hours)
+$Timestamp = [System.DateTime]::UtcNow
 
-$permission = Get-CosmosDbPermission -Context $cosmosDbContext -UserId 'UserAudit' -Id 'all_useraudit' -TokenExpiry $TokenLife
+$permissions = Get-CosmosDbPermission -Context $cosmosDbContext -UserId 'UserAudit' -TokenExpiry $TokenLife
 
-$contextToken = New-CosmosDbContextToken `
-    -Resource "dbs/DeviceUsage/colls/Users" `
-    -TimeStamp $permission[0].Timestamp `
-    -TokenExpiry $TokenLife `
-    -Token (ConvertTo-SecureString -String $permission[0].Token -AsPlainText -Force)
-Write-Information "Context token created."
+if ('all_useraudit_userusage' -notin $permissions.Id) {
+    $userUsageCollectionId = Get-CosmosDbCollectionResourcePath -Database 'DeviceUsage' -Id 'UserUsage'
+    New-CosmosDbPermission -Context $cosmosDbContext -UserId 'UserAudit' -Id 'all_useraudit_userusage' -Resource $userUsageCollectionId -PermissionMode Read
+    $permissions = Get-CosmosDbPermission -Context $cosmosDbContext -UserId 'UserAudit' -TokenExpiry $TokenLife
+}
+
+if ($tokenType -eq 'userusage') {
+    $permission = $permissions | Where-Object { $_.Id -eq "all_useraudit_userusage" }
+} else {
+    $permission = $permissions | Where-Object { $_.Id -eq "all_useraudit_users" }
+}
+
+$ReturnToken = @{
+    Token = $permission.Token
+    Timestamp = $Timestamp
+    Life = $TokenLife
+    Resource = $permission.Resource
+}
+Write-Information "Token Created of type '$($tokenType)'."
 
 # Return the resource token
 Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
     headers    = @{'content-type' = 'application\json' }
     StatusCode = [httpstatuscode]::OK
-    Body       = ($contextToken | ConvertTo-Json)
+    Body       = ($ReturnToken | ConvertTo-Json)
 })
     
