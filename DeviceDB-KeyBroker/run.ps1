@@ -20,6 +20,8 @@ $clientToken = $request.headers.'x-api-key'
 $tokenType = 'users'
 if ($request.Body.tokenType -and $request.Body.tokenType -eq 'userusage') {
     $tokenType = 'userusage'
+} elseif ($request.Body.tokenType -and $request.Body.tokenType -eq 'computers') {
+    $tokenType = 'computers'
 }
 
 $ApiKeys = (Get-ChildItem env:APIKey_*)
@@ -49,8 +51,10 @@ if ("UserAudit" -notin $ExistingUsers.Id) {
     New-CosmosDbUser -Context $cosmosDbContext -Id 'UserAudit' | Out-Null
     $usersCollectionId = Get-CosmosDbCollectionResourcePath -Database 'DeviceUsage' -Id 'Users'
     $userUsageCollectionId = Get-CosmosDbCollectionResourcePath -Database 'DeviceUsage' -Id 'UserUsage'
+    $computersCollectionId = Get-CosmosDbCollectionResourcePath -Database 'DeviceUsage' -Id 'Computers'
     New-CosmosDbPermission -Context $cosmosDbContext -UserId 'UserAudit' -Id 'all_useraudit_users' -Resource $usersCollectionId -PermissionMode All
     New-CosmosDbPermission -Context $cosmosDbContext -UserId 'UserAudit' -Id 'all_useraudit_userusage' -Resource $userUsageCollectionId -PermissionMode Read
+    New-CosmosDbPermission -Context $cosmosDbContext -UserId 'UserAudit' -Id 'all_useraudit_computers' -Resource $computersCollectionId -PermissionMode Read
     Write-Information "New User and Permissions created."
 }
 
@@ -66,8 +70,16 @@ if ('all_useraudit_userusage' -notin $permissions.Id) {
     $permissions = Get-CosmosDbPermission -Context $cosmosDbContext -UserId 'UserAudit' -TokenExpiry $TokenLife
 }
 
+if ('all_useraudit_computers' -notin $permissions.Id) {
+    $computersCollectionId = Get-CosmosDbCollectionResourcePath -Database 'DeviceUsage' -Id 'Computers'
+    New-CosmosDbPermission -Context $cosmosDbContext -UserId 'UserAudit' -Id 'all_useraudit_computers' -Resource $computersCollectionId -PermissionMode Read
+    $permissions = Get-CosmosDbPermission -Context $cosmosDbContext -UserId 'UserAudit' -TokenExpiry $TokenLife
+}
+
 if ($tokenType -eq 'userusage') {
     $permission = $permissions | Where-Object { $_.Id -eq "all_useraudit_userusage" }
+} elseif ($tokenType -eq 'computers') {
+    $permission = $permissions | Where-Object { $_.Id -eq "all_useraudit_computers" }
 } else {
     $permission = $permissions | Where-Object { $_.Id -eq "all_useraudit_users" }
 }
